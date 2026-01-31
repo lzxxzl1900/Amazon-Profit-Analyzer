@@ -803,13 +803,13 @@ with st.expander("点击展开 SQL 控制台", expanded=False):
         else:
             st.error("❌ 数据未加载，请先上传报表！")
 # ==========================================
-# --- 3. 新增功能：关键词捡漏分析 (Gap Analysis) ---
+# --- 3. 新增功能：关键词捡漏分析 (针对你的卖家精灵表格) ---
 # ==========================================
 st.divider()
 st.header("🕵️‍♀️ 关键词捡漏实验室 (Gap Analysis)")
-st.caption("使用说明：请从卖家精灵导出【关键词反查】表格，上传至下方。")
+st.caption("使用说明：请直接上传你导出的【ReverseASIN...csv】文件。")
 
-# 1. 创建两个标签页，把功能分开，显得很专业
+# 1. 创建标签页
 tab1, tab2 = st.tabs(["📊 词频分析 (找属性词)", "🚀 捡漏分析 (找蓝海词)"])
 
 # 上传组件
@@ -817,37 +817,47 @@ kw_file = st.file_uploader("上传卖家精灵 CSV 表格", type=['csv', 'xlsx']
 
 if kw_file:
     try:
-        # 读取数据 (兼容 CSV 和 Excel)
+        # --- 智能读取逻辑 ---
         if kw_file.name.endswith('.csv'):
+            # 尝试常见的中文编码，防止乱码
             try:
                 kw_df = pd.read_csv(kw_file)
             except:
                 kw_file.seek(0)
-                kw_df = pd.read_csv(kw_file, encoding='gbk')
+                kw_df = pd.read_csv(kw_file, encoding='gbk') # 卖家精灵中文导出通常是 gbk
         else:
             kw_df = pd.read_excel(kw_file)
             
         # 清洗列名 (去空格)
         kw_df.columns = [str(c).strip() for c in kw_df.columns]
         
-        # 自动识别“关键词”和“搜索量”这两列 (防止表格格式不一样)
-        # 逻辑：找名字里带 "Keyword" 的列，和带 "Volume" 的列
-        col_kw = next((c for c in kw_df.columns if 'eyword' in c or '关键词' in c), None)
-        col_vol = next((c for c in kw_df.columns if 'olume' in c or '搜索量' in c), None)
+        # --- 🔴 关键修正：精准匹配你的表格列名 ---
+        # 你的表格列名是："流量词", "月搜索量"
+        col_kw = '流量词' 
+        col_vol = '月搜索量'
 
-        if col_kw and col_vol:
+        # 检查列是否存在
+        if col_kw in kw_df.columns and col_vol in kw_df.columns:
+            
+            # 数据预处理：把“月搜索量”转成数字（去掉逗号等）
+            if kw_df[col_vol].dtype == 'object':
+                 kw_df[col_vol] = kw_df[col_vol].astype(str).str.replace(',', '').apply(pd.to_numeric, errors='coerce').fillna(0)
+
             # --- 功能 A: 词频分析 (Tab 1) ---
             with tab1:
-                st.subheader("市场热词云 (买家最爱搜什么？)")
-                # 把所有关键词拼在一起
+                st.subheader("🔥 市场热词云")
+                st.markdown("这是买家搜索的高频词根，**出现次数越多，越应该埋进你的标题或五点里。**")
+                
+                # 拼合所有关键词
                 all_text = " ".join(kw_df[col_kw].astype(str)).lower()
-                # 简单的停用词表 (去掉 useless words)
-                stopwords = ['for', 'in', 'the', 'and', 'with', 'of', 'to', 'a', 'mini', 'portable'] 
+                
+                # 停用词表 (过滤掉无意义的词)
+                stopwords = ['for', 'in', 'the', 'and', 'with', 'of', 'to', 'a', 'set', 'pack', 'size'] 
                 words = [w for w in all_text.split() if w not in stopwords and len(w) > 2]
                 
-                # 统计前 15 名
+                # 统计前 20 名
                 from collections import Counter
-                common_words = Counter(words).most_common(15)
+                common_words = Counter(words).most_common(20)
                 word_df = pd.DataFrame(common_words, columns=['热词', '出现频次'])
                 
                 c1, c2 = st.columns([1, 2])
@@ -855,46 +865,73 @@ if kw_file:
                     st.dataframe(word_df, use_container_width=True)
                 with c2:
                     st.bar_chart(word_df.set_index('热词'))
-                st.info("💡 建议：将左侧的高频词埋入你的 Listing 标题或五点描述中。")
+                
+                st.success(f"✅ 分析完成！共扫描了 {len(kw_df)} 个流量词。")
 
             # --- 功能 B: 捡漏分析 (Tab 2) ---
             with tab2:
-                st.subheader("蓝海词挖掘机")
+                st.subheader("💎 蓝海词挖掘机")
                 
-                # 输入竞品标题
-                comp_title = st.text_area("👉 第一步：复制竞品的标题到这里", 
-                                        value="Anker Portable Charger, 10000mAh Power Bank (示例)",
-                                        height=70)
+                # 交互区
+                col_input, col_param = st.columns([2, 1])
                 
-                # 设定捡漏门槛
-                min_vol = st.slider("👉 第二步：设定最小搜索量 (太小的词没必要捡)", 100, 5000, 1000)
+                with col_input:
+                    # 默认填入一个示例标题
+                    comp_title = st.text_area("1. 复制竞品的标题到这里：", 
+                                            value="Mellanni Queen Sheet Set - Iconic Collection - Hotel Luxury 1800 Bedding Sheets",
+                                            height=100)
                 
-                # 按钮触发
+                with col_param:
+                    min_vol = st.number_input("2. 最小月搜索量", value=1000, step=500)
+                    st.caption("搜索量低于这个值的词，捡漏意义不大。")
+                
+                # 按钮
                 if st.button("开始挖掘蓝海词"):
+                    # 核心逻辑函数
                     def check_gap(row):
-                        k = str(row[col_kw]).lower()
-                        t = comp_title.lower()
-                        # 核心逻辑：如果搜索量够大，且标题里没这个词
-                        if k not in t: 
+                        keyword = str(row[col_kw]).lower() # 比如 "red bed sheets"
+                        title = comp_title.lower()         # 比如 "luxury bed sheets"
+                        
+                        # 如果关键词不在标题里，就是捡漏机会
+                        # (这里用简单的包含逻辑，实际可以用更复杂的拆词逻辑)
+                        if keyword not in title: 
                             return True
                         return False
 
-                    # 筛选
-                    mask_vol = pd.to_numeric(kw_df[col_vol], errors='coerce').fillna(0) > min_vol
-                    kw_df['Is_Gap'] = kw_df.apply(check_gap, axis=1)
+                    # 筛选数据
+                    mask_vol = kw_df[col_vol] > min_vol # 搜索量达标
+                    kw_df['Is_Gap'] = kw_df.apply(check_gap, axis=1) # 标题未覆盖
                     
+                    # 结果集
                     gap_df = kw_df[mask_vol & kw_df['Is_Gap']].sort_values(by=col_vol, ascending=False)
                     
+                    # 展示结果
                     if not gap_df.empty:
-                        st.success(f"✅ 成功发现 {len(gap_df)} 个蓝海词！竞品标题都没写！")
+                        st.balloons()
+                        st.markdown(f"### 🎉 发现 {len(gap_df)} 个蓝海词！")
+                        st.info("💡 解释：这些词搜索量很大，但你输入的竞品标题里竟然完全没写！**赶紧把这些词加到你的 Listing 里！**")
+                        
+                        # 只展示关键列
+                        show_cols = [col_kw, col_vol]
+                        # 如果有广告排名列，也展示出来，辅助判断竞争
+                        if '广告排名' in kw_df.columns:
+                            show_cols.append('广告排名')
+                        if 'SPR' in kw_df.columns: # SPR也是排名指标
+                             show_cols.append('SPR')
+
                         st.dataframe(
-                            gap_df[[col_kw, col_vol]].style.background_gradient(subset=[col_vol], cmap='Greens'),
+                            gap_df[show_cols].style.background_gradient(subset=[col_vol], cmap='Greens'),
                             use_container_width=True
                         )
                     else:
-                        st.warning("⚠️ 没找到。可能是竞品标题写得太全了，或者你设定的搜索量门槛太高。")
+                        st.warning("⚠️ 没找到蓝海词。可能是竞品标题写得太完美了，或者是你设定的搜索量太高。")
+
         else:
-            st.error(f"❌ 无法识别列名。请确保CSV里包含“Keyword”和“Search Volume”这两列。\n你的列名是: {list(kw_df.columns)}")
+            # 如果列名还是不对，打印出来让用户看
+            st.error("❌ 列名匹配失败！")
+            st.write(f"你的表格里必须包含这两列：`{col_kw}` 和 `{col_vol}`")
+            st.write("目前系统检测到的列名是：", kw_df.columns.tolist())
             
     except Exception as e:
-        st.error(f"读取文件出错: {e}")
+        st.error(f"⚠️ 发生错误: {e}")
+        st.caption("请确保上传的是【卖家精灵】直接导出的 CSV 或 Excel 文件。")
